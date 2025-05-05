@@ -1,0 +1,53 @@
+[
+    {
+      "question": "Ile kilometrów ma równik Ziemi?",
+      "answer": 40075,
+      "unit": "km"
+    },
+    {
+      "question": "Ile litrów wody wypija przeciętny człowiek rocznie?",
+      "answer": 730,
+      "unit": "l"
+    },
+    {
+      "question": "W którym roku wynaleziono żarówkę?",
+      "answer": 1879,
+      "unit": "rok"
+    },
+    {
+      "question": "Ile metrów wysokości ma Pałac Kultury i Nauki w Warszawie?",
+      "answer": 237,
+      "unit": "m"
+    },
+    {
+      "question": "Ile procent ciała dorosłego człowieka stanowi woda?",
+      "answer": 60,
+      "unit": "%"
+    },
+    {
+      "question": "Ile klatek na sekundę ma standardowy film kinowy?",
+      "answer": 24,
+      "unit": "kl/s"
+    },
+    {
+      "question": "Ile kilogramów waży przeciętny koń pełnej krwi angielskiej?",
+      "answer": 500,
+      "unit": "kg"
+    },
+    {
+      "question": "Ile dni trwała II wojna światowa?",
+      "answer": 2194,
+      "unit": "dni"
+    },
+    {
+      "question": "Ile stron ma polska konstytucja z 1997 roku (wersja drukowana)?",
+      "answer": 52,
+      "unit": "strony"
+    },
+    {
+      "question": "Ile sekund trwa przeciętny przebłysk pamięci sensorycznej?",
+      "answer": 0.5,
+      "unit": "sekundy"
+    }
+  ]
+  
