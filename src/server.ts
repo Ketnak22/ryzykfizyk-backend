@@ -46,6 +46,7 @@ function removeUserFromRoom(roomId: string, userId: string): void {
 
 io.on("connection", socket => {
   let userRoom: string = "";
+  let currentQuestion = 0;
 
   socket.on("create-room", async (username: string, cb: (room: string) => void) => {
     userRoom = generateRoomId();
@@ -102,11 +103,11 @@ io.on("connection", socket => {
       io.to(userRoom).emit("all-users-ready")
     }
   })
-  
-  socket.on("get-questions", (cb: (qs: Question[]) => void) => {
-    cb(questions);
-  })
 
+  socket.on("get-question", (qs: (question: Question) => void) => {
+    qs(questions[currentQuestion++]);
+  })
+  
 })
 
 httpServer.listen(PORT, () => {
