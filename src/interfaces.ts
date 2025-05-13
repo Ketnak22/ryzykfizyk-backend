@@ -8,10 +8,14 @@ interface User {
   id: string;
   username: string;
   ready: boolean;
+  anwser?: number;
 }
 
-interface UsersList {
-  [id: string]: User[];
+interface RoomsList {
+  [id: string]: {
+    "users": User[],
+    "questionCounter": number
+  };
 }
 
-export { Question, User, UsersList };
+export { Question, User, RoomsList };
