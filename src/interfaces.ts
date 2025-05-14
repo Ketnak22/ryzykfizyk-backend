@@ -8,7 +8,7 @@ interface User {
   id: string;
   username: string;
   ready: boolean;
-  anwser?: number;
+  answer?: number;
 }
 
 interface RoomsList {

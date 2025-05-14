@@ -10,7 +10,8 @@ const PORT = process.env.PORT || 3001;
 const questions: Question[] = _questions
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: '*' }
+  cors: { origin: '*' },
+  transports: ['websocket', 'polling'],
 });
 
 // Generate random 5-digit id for new room
@@ -112,30 +113,40 @@ io.on("connection", socket => {
 
   // ** Odpytywanie **
   socket.on("get-question", (qs: (question: string) => void) => {
-    qs(questions[currentQuestion++].question);
+    const questionCounter = usersList[userRoom]?.questionCounter ?? 0;
+    qs(questions[questionCounter].question);
   })
 
-  socket.on("send-answer", (answer: number, cb: ()  => void) => {
+  socket.on("send-answer", (answer: string, cb: (successfull: boolean)  => void) => {
     const user = findUser(userRoom, socket.id)
     if (user) {
+
+      // Walidacja odpowiedzi
+      const answerNumber = Number(answer);
+      if (isNaN(answerNumber)) {
+        cb(false); // Niepoprawna odpowiedź
+        return;
+      }
       console.log(`User ${user.username} answered: ${answer}`);
+
+      // Zapisanie odpowiedzi
       user.ready = true;
-      user.anwser = answer;
-      cb();
+      user.answer = answerNumber;
+      cb(true); // Poprawna odpowiedź
       if (isEveryoneReady(userRoom)) {
         console.log(`Everyone in room ${userRoom} has answered!`);
-        // io.to(userRoom).emit("receive-user-answers", {id: socket.id, answer: answer})
+
         io.to(userRoom).emit("all-users-answered")
-        
+
+        usersList[userRoom].questionCounter++;
       }
-      // socket.to(userRoom).emit("receive-answer", {id: socket.id, answer: answer})
     }
   })
 
   socket.on("get-user-answers", (cb: (answers: {id: string, answer: number}[]) => void) => {
     const userAnswers = usersList[userRoom].users
-      .filter(user => typeof user.anwser === "number")
-      .map(user => ({id: user.id, answer: user.anwser as number}));
+      .filter(user => typeof user.answer === "number")
+      .map(user => ({id: user.id, answer: user.answer as number, unit: questions[currentQuestion]?.unit ?? ""}));
     cb(userAnswers);
   })
   
