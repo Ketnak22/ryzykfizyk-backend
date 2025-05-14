@@ -14,6 +14,8 @@ const io = new Server(httpServer, {
   transports: ['websocket', 'polling'],
 });
 
+const DEFAULT_USER_TOKENS = 2;
+
 // Generate random 5-digit id for new room
 const generateRoomId = (): string => Math.floor(10000 + Math.random() * 90000).toString();
 
@@ -50,17 +52,25 @@ io.on("connection", socket => {
   let userRoom: string = "";
   let currentQuestion = 0;
 
+  const getDefaultUser = (name: string): User => ({
+    id: socket.id,
+    username: name,
+    ready: false,
+    tokens: 0,
+    votedAnwsers: []
+  });
+
   // ** Dołączanie do pokoju **
   socket.on("create-room", async (username: string, cb: (room: string) => void) => {
     userRoom = generateRoomId();
 
-    socket.join(userRoom)
+    socket.join(userRoom);
     
-    console.log(`User ${socket.id} with name ${username} joined room ${userRoom}`)
+    console.log(`User ${socket.id} with name ${username} joined room ${userRoom}`);
 
-    cb(userRoom)
+    cb(userRoom);
   
-    addUserToRoom(userRoom, {id: socket.id, username: username, ready: false})
+    addUserToRoom(userRoom, getDefaultUser(username));
   })
 
   socket.on("join-room", async (roomId: string, username: string, cb: (roomId: string, success: boolean) => void) => {
@@ -71,12 +81,12 @@ io.on("connection", socket => {
       return;
     }
 
-    socket.join(roomId)
-    console.log(`User ${socket.id} with name ${username} joined room ${roomId}`)
+    socket.join(roomId);
+    console.log(`User ${socket.id} with name ${username} joined room ${roomId}`);
 
-    userRoom = roomId
+    userRoom = roomId;
     cb(roomId, true);
-    addUserToRoom(userRoom, {id: socket.id, username: username, ready: false})
+    addUserToRoom(userRoom, getDefaultUser(username));
   })
 
   socket.on("user-ready", () => {
@@ -143,13 +153,45 @@ io.on("connection", socket => {
     }
   })
 
-  socket.on("get-user-answers", (cb: (answers: {id: string, answer: number}[]) => void) => {
+  socket.on("start-voting", (cb: (answers: {id: string, answer: number}[], tokens: number) => void) => {
     const userAnswers = usersList[userRoom].users
-      .filter(user => typeof user.answer === "number")
-      .map(user => ({id: user.id, answer: user.answer as number, unit: questions[currentQuestion]?.unit ?? ""}));
-    cb(userAnswers);
+    .filter(user => typeof user.answer === "number")
+    .map(user => ({id: user.id, answer: user.answer as number, unit: questions[currentQuestion]?.unit ?? ""}));
+    
+    const user = findUser(userRoom, socket.id);
+    if (user) {
+      user.tokens = DEFAULT_USER_TOKENS;
+      cb(userAnswers, user.tokens);
+    } else {
+      cb([], -1); // Użytkownik nie znaleziony
+    }
   })
   
+  socket.on("clear-votes", (cb: (succesfull: boolean, defaultUserTokens: number) => void) => {
+    const user = findUser(userRoom, socket.id);
+    if (user) {
+      user.votedAnwsers = [];
+      cb(true, DEFAULT_USER_TOKENS);
+    } else {
+      cb(false, DEFAULT_USER_TOKENS); // Użytkownik nie znaleziony
+    }
+  });
+
+  socket.on("vote", (answerId: string, cb: (succesfull: boolean) => void) => {
+    const user = findUser(userRoom, socket.id);
+    if (user) {
+      if (user.votedAnwsers.includes(answerId)) {
+        cb(false); // Już głosował na tę odpowiedź
+        return;
+      }
+
+      user.votedAnwsers.push(answerId);
+      user.tokens--;
+      cb(true);
+    } else {
+      cb(false); // Użytkownik nie znaleziony
+    }
+  })
 })
 
 httpServer.listen(PORT, () => {

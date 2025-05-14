@@ -9,6 +9,8 @@ interface User {
   username: string;
   ready: boolean;
   answer?: number;
+  tokens: number;
+  votedAnwsers: string[];
 }
 
 interface RoomsList {
