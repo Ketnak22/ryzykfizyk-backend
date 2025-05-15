@@ -3,7 +3,7 @@ import { Server } from 'socket.io';
 import { app } from './app.ts';
 
 import _questions from "./questions.json" with {type: "json"}
-import type { Question, User, RoomsList } from './interfaces.ts';
+import type { Question, User, RoomsList, Response, VotedAnswer } from './interfaces.ts';
 
 const PORT = process.env.PORT || 3001;
 
@@ -148,11 +148,18 @@ io.on("connection", socket => {
 
         io.to(userRoom).emit("all-users-answered")
 
-        usersList[userRoom].questionCounter++;
+        // if (usersList[userRoom].questionCounter >= questions.length) {
+        //   io.to(userRoom).emit("end-of-questions");
+        //   console.log(`End of questions in room ${userRoom}`);
+        // }
+        usersList[userRoom].users.forEach(user => {
+          user.ready = false; // reset readiness for next question
+        })
       }
     }
   })
 
+  // ** Głosowanie **
   socket.on("start-voting", (cb: (answers: {id: string, answer: number}[], tokens: number) => void) => {
     const userAnswers = usersList[userRoom].users
     .filter(user => typeof user.answer === "number")
@@ -166,31 +173,97 @@ io.on("connection", socket => {
       cb([], -1); // Użytkownik nie znaleziony
     }
   })
-  
-  socket.on("clear-votes", (cb: (succesfull: boolean, defaultUserTokens: number) => void) => {
-    const user = findUser(userRoom, socket.id);
-    if (user) {
-      user.votedAnwsers = [];
-      cb(true, DEFAULT_USER_TOKENS);
-    } else {
-      cb(false, DEFAULT_USER_TOKENS); // Użytkownik nie znaleziony
-    }
-  });
 
-  socket.on("vote", (answerId: string, cb: (succesfull: boolean) => void) => {
+  socket.on("confirm-votes", (votedAnwsers: VotedAnswer[], finalTokens: number, cb: (response: Response) => void) => {
     const user = findUser(userRoom, socket.id);
     if (user) {
-      if (user.votedAnwsers.includes(answerId)) {
-        cb(false); // Już głosował na tę odpowiedź
+      if (finalTokens > user.tokens) {
+        cb({success: false, message: "Not enough tokens!"});
+        return;
+      }
+      if (finalTokens < 0) {
+        cb({success: false, message: "Invalid tokens!"});
         return;
       }
 
-      user.votedAnwsers.push(answerId);
-      user.tokens--;
-      cb(true);
+      if (finalTokens === user.tokens) {
+        user.ready = true;
+        cb({success: true});
+        return;
+      }
+
+      user.tokens = finalTokens;
+
+      user.votedAnwsers = votedAnwsers;
+      console.log("User has voted for: ", user.votedAnwsers);
+
+      user.ready = true;
+
+      if (isEveryoneReady(userRoom)) {
+        console.log(`Everyone in room ${userRoom} has voted!`);
+        io.to(userRoom).emit("all-users-voted");
+
+        usersList[userRoom].users.forEach(user => {
+          user.ready = false; // reset readiness for next question/voting
+        })
+
+        calculateTokens();
+      }
+      
+      cb({success: true});
+      
     } else {
-      cb(false); // Użytkownik nie znaleziony
+      cb({success: false, message: "User not found!"});
     }
+  })
+
+  function calculateTokens() {
+
+  }
+
+  socket.on("get-voting-results", (cb: (correctAnswer: {answer: number, unit: string}, closestAnswer: number, tokens: number, allUsersTokens: number[]) => void) => {
+    const user = findUser(userRoom, socket.id);
+    const correctAnswer = questions[usersList[userRoom].questionCounter];
+    const correctAnswerWithUnit = { 
+      answer: correctAnswer.answer,
+      unit: correctAnswer.unit
+    }
+    const closestAnswer = findClosestAnswer(correctAnswerWithUnit.answer);
+    const tokens = user?.tokens ?? 0;
+    const allUsersTokens = usersList[userRoom].users.map(user => user.tokens);
+
+    cb(correctAnswer, closestAnswer, tokens, allUsersTokens);
+
+    
+  })
+
+  function findClosestAnswer(correctAnswer: number): number {
+    const correct = Number(correctAnswer);
+    const answers = usersList[userRoom]?.users
+      .map(user => ({
+        id: user.id,
+        answer: typeof user.answer === "number" ? user.answer : null
+      }))
+      .filter(u => u.answer !== null) as { id: string, answer: number }[];
+
+    // Filter answers not exceeding the correct answer
+    const validAnswers = answers.filter(u => u.answer <= correct);
+
+    if (validAnswers.length === 0) {
+      // If all answers exceed, return the smallest one
+      const min = answers.reduce((prev, curr) => (curr.answer < prev.answer ? curr : prev), answers[0]);
+      return min.answer;
+    }
+
+    // Find the answer closest to the correct answer, but not exceeding it
+    const closest = validAnswers.reduce((prev, curr) =>
+      (correct - curr.answer < correct - prev.answer ? curr : prev)
+    );
+    return closest.answer;
+  }
+  
+  socket.on("next-round", () => {
+    usersList[userRoom].questionCounter++;
   })
 })
 

@@ -4,20 +4,32 @@ interface Question {
   unit: string;
 }
 
+interface VotedAnswer {
+  id: string;
+  tokens: number;
+}
+
 interface User {
   id: string;
   username: string;
+  
   ready: boolean;
   answer?: number;
+
   tokens: number;
-  votedAnwsers: string[];
+  votedAnwsers: VotedAnswer[];
 }
 
 interface RoomsList {
   [id: string]: {
-    "users": User[],
-    "questionCounter": number
+    users: User[];
+    questionCounter: number;
   };
 }
 
-export { Question, User, RoomsList };
+interface Response {
+  success: boolean;
+  message?: string;
+}
+
+export { Question, User, RoomsList, Response, VotedAnswer };
