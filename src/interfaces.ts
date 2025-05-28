@@ -24,6 +24,7 @@ interface RoomsList {
   [id: string]: {
     users: User[];
     questionCounter: number;
+    questions: Question[]; // Add questions array for each room
   };
 }
 
