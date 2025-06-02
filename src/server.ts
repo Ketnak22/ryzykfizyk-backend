@@ -3,6 +3,12 @@ import { Server } from 'socket.io';
 import { app } from './app.ts';
 
 const QUESTION_LIMIT = 7; // Limit of questions per room, can be changed later
+const MAX_USERS_PER_ROOM = 10; // Maximum number of users per room, can be changed later
+const MAX_USERNAME_LENGTH = 20; // Maximum length of username, can be changed later
+const DEFAULT_USER_TOKENS = 200; // Default number of tokens for each user at the start of the game
+const MINIM_USER_TOKENS = 25; // Minimum number of tokens for each user, prevents user from blocking the game by having 0 tokens
+const INNER_RANKING_TIMEOUT = 5000; // Timeout for showing inner ranking after voting, can be changed later
+
 
 import _questions from "./questions.json" with {type: "json"}
 import type { Question, User, RoomsList, Response, VotedAnswer } from './interfaces.ts';
@@ -15,9 +21,6 @@ const io = new Server(httpServer, {
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
 });
-
-const DEFAULT_USER_TOKENS = 200;
-const MINIM_USER_TOKENS = 25;
 
 // Generate random 5-digit id for new room
 const generateRoomId = (): string => Math.floor(10000 + Math.random() * 90000).toString();
@@ -46,7 +49,7 @@ function addUserToRoom(roomId: string, user: User): void {
   if (!usersList[roomId]) {
     usersList[roomId] = {
       users: [],
-      questionCounter: 0,
+      questionCounter: -1,
       questions: shuffleArray(_questions) // assign shuffled questions to the room
     };
   }
@@ -66,6 +69,31 @@ function removeUserFromRoom(roomId: string, userId: string): void {
 }
 
 io.on("connection", socket => {
+
+  // Middleware to check if user is in a room and if the game has started
+  socket.use(([event, ...args], next) => {
+    if (
+      ["send-answer", "start-voting", "confirm-votes", "get-voting-results", "get-player-rankings"].includes(event)
+    ) {
+      const cb = args[args.length - 1];
+      if (typeof cb === "function") {
+        if (!userRoom || !usersList[userRoom]) {
+          cb({ success: false, message: "No room found!" });
+          return;
+        }
+        if (usersList[userRoom].questionCounter === -1) {
+          cb({ success: false, message: "Game has not started yet!" });
+          return;
+        }
+        if (usersList[userRoom].questionCounter >= QUESTION_LIMIT) {
+          cb({ success: false, message: "Game has already ended!" });
+          return;
+        }
+      }
+    }
+    next();
+  });
+
   let userRoom: string = "";
 
   const getDefaultUser = (name: string): User => ({
@@ -82,23 +110,57 @@ io.on("connection", socket => {
   const checkEndOfGame = () => usersList[userRoom].questionCounter >= QUESTION_LIMIT - 1;
 
   // ** Dołączanie do pokoju **
-  socket.on("create-room", async (username: string, cb: (room: string) => void) => {
+  socket.on("create-room", async (username: string, cb: (room: string, response: Response) => void) => {
+    // Check if username is too long
+    if (username.length > MAX_USERNAME_LENGTH) {
+      console.log(`User with name ${username} tried to create a room but username is too long.`);
+      cb("", { success: false, message: `Username cannot be longer than ${MAX_USERNAME_LENGTH} characters!` });
+      return;
+    }
+
+    // Check if username is empty
+    if (!username?.trim()) {
+      console.log(`User with name ${username} tried to create a room but username is empty.`);
+      cb("", { success: false, message: "Username cannot be empty!" });
+      return;
+    }
+
     userRoom = generateRoomId();
 
     socket.join(userRoom);
     
     console.log(`User ${socket.id} with name ${username} joined room ${userRoom}`);
-
-    cb(userRoom);
+    cb(userRoom, { success: true });
   
     addUserToRoom(userRoom, getDefaultUser(username));
   })
 
-  socket.on("join-room", async (roomId: string, username: string, cb: (roomId: string, success: boolean) => void) => {
+  socket.on("join-room", async (roomId: string, username: string, cb: (roomId: string, response: Response) => void) => {
 
     // Check if roomId doesn't exist or username is empty
     if (!usersList[roomId] || !username?.trim()) {
-      cb(roomId, false);
+      cb(roomId, { success: false, message: "Invalid room ID or username!" });
+      return;
+    }
+
+    // Check if room is already in progress
+    if (usersList[roomId].questionCounter !== -1) {
+      console.log(`Room ${roomId} is already in progress, cannot join.`);
+      cb(roomId, { success: false, message: "Room is already in progress!" });
+      return;
+    }
+
+    // Check if username already exists in the room
+    if (usersList[roomId].users.some(user => user.username === username)) {
+      console.log(`User with name ${username} already exists in room ${roomId}`);
+      cb(roomId, { success: false, message: "Username already exists in this room!" });
+      return;
+    }
+
+    // Check if room is full
+    if (usersList[roomId].users.length >= MAX_USERS_PER_ROOM) {
+      console.log(`Room ${roomId} is full, cannot join.`);
+      cb(roomId, { success: false, message: "Room is full!" });
       return;
     }
 
@@ -106,17 +168,26 @@ io.on("connection", socket => {
     console.log(`User ${socket.id} with name ${username} joined room ${roomId}`);
 
     userRoom = roomId;
-    cb(roomId, true);
+    cb(roomId, { success: true });
     addUserToRoom(userRoom, getDefaultUser(username));
   })
 
-  socket.on("user-ready", () => {
+  socket.on("user-ready", (cb: (response: Response) => void) => {
     const user = findUser(userRoom, socket.id)
+    if (!user) {
+      console.error(`User with id ${socket.id} not found in room ${userRoom}`);
+      cb({ success: false, message: "User not found!" });
+      return;
+    }
+    if (user.ready) {
+      console.log(`User ${socket.id} is already ready.`);
+      cb({ success: false, message: "You are already ready!" });
+      return;
+    }
     if (user) {
       user.ready = true
       console.log(`User ${socket.id} set to ready`);
       socket.to(userRoom).emit("user-ready-update", socket.id)
-
       if (isEveryoneReady(userRoom)) {
         console.log(`Everyone in room ${userRoom} is ready!`);
         io.to(userRoom).emit("all-users-ready")
@@ -124,7 +195,10 @@ io.on("connection", socket => {
         usersList[userRoom].users.forEach(user => {
           user.ready = false; // reset readiness for questions
         });
-    }
+
+        usersList[userRoom].questionCounter = 0; // setup for first question
+      }
+      cb({ success: true });
     }
   })
 
@@ -161,7 +235,7 @@ io.on("connection", socket => {
 
         setTimeout(() => {
           io.to(userRoom).emit("show-ranking");
-        }, 5000);
+        }, INNER_RANKING_TIMEOUT);
 
         setTimeout(() => {
           if (checkEndOfGame()) {
@@ -175,7 +249,7 @@ io.on("connection", socket => {
           });
           usersList[userRoom].questionCounter++;
           io.to(userRoom).emit("next-question");
-        }, 10000);
+        }, INNER_RANKING_TIMEOUT * 2);
       }
 
       // Wyświetlanie rankingu - jeśli ktoś wyjdzie, odśwież ranking
@@ -183,38 +257,41 @@ io.on("connection", socket => {
     }
   })
 
-  // ** Odpytywanie **
+  // ** Questioning **
   socket.on("get-question", (qs: (question: string) => void) => {
-    // const questionCounter = usersList[userRoom]?.questionCounter ?? 0;
-    // qs(questions[questionCounter].question);
+    if (usersList[userRoom]?.questionCounter === -1) {
+      console.error(`Game has not started yet in room ${userRoom}`);
+      return;
+    }
     qs(getCurrentQuestion().question);
   })
 
-  socket.on("send-answer", (answer: string, cb: (successfull: boolean)  => void) => {
+  socket.on("send-answer", (answer: string, cb: (response: Response)  => void) => {
     const user = findUser(userRoom, socket.id)
     if (user) {
 
-      // Walidacja odpowiedzi
+      // Answer validation
       const answerNumber = Number(answer);
       if (isNaN(answerNumber)) {
-        cb(false); // Niepoprawna odpowiedź
+        cb({ success: false, message: "Answer is not a number!"});
         return;
       }
+      if (answerNumber < 0) {
+        cb({ success: false, message: "Answer cannot be negative!"});
+        return;
+      }
+
       console.log(`User ${user.username} answered: ${answer}`);
 
-      // Zapisanie odpowiedzi
+      // Save answer
       user.ready = true;
       user.answer = answerNumber;
-      cb(true); // Poprawna odpowiedź
+      cb({ success: true }); // Poprawna odpowiedź
       if (isEveryoneReady(userRoom)) {
         console.log(`Everyone in room ${userRoom} has answered!`);
 
         io.to(userRoom).emit("all-users-answered")
 
-        // if (usersList[userRoom].questionCounter >= questions.length) {
-        //   io.to(userRoom).emit("end-of-questions");
-        //   console.log(`End of questions in room ${userRoom}`);
-        // }
         usersList[userRoom].users.forEach(user => {
           user.ready = false; // reset readiness for next question
         })
@@ -222,23 +299,26 @@ io.on("connection", socket => {
     }
   })
 
-  // ** Głosowanie **
-  socket.on("start-voting", (cb: (answers: {id: string, answer: number}[], unit: string, tokens: number) => void) => {
+  // ** Voting **
+  socket.on("start-voting", (cb: (response: Response, answers: {id: string, answer: number}[], unit: string, tokens: number) => void) => {
     const userAnswers = usersList[userRoom].users
     .filter(user => typeof user.answer === "number")
     .map(user => ({id: user.id, answer: user.answer as number, unit: getCurrentQuestionUnit()}));
     
     const user = findUser(userRoom, socket.id);
     const unit = getCurrentQuestion().unit;
-    if (user) {
-      if (user.tokens === -1) {
-        user.tokens = DEFAULT_USER_TOKENS;
-      }
-      
-      cb(userAnswers, unit, user.tokens);
-    } else {
-      cb([], unit, -1); // Użytkownik nie znaleziony
+
+    if (!user) {
+      console.error(`User with id ${socket.id} not found in room ${userRoom}`);
+      cb({ success: false, message: "User not found!" }, [], unit, -1);
+      return;
     }
+
+    if (user.tokens === -1) {
+      user.tokens = DEFAULT_USER_TOKENS;
+    }
+      
+    cb({ success: true}, userAnswers, unit, user.tokens);
   })
 
   socket.on("confirm-votes", (votedAnwsers: VotedAnswer[], finalTokens: number, cb: (response: Response) => void) => {
@@ -276,7 +356,7 @@ io.on("connection", socket => {
         // Set timeouts ONCE per room after all users have voted
         setTimeout(() => {
           io.to(userRoom).emit("show-ranking");
-        }, 5000);
+        }, INNER_RANKING_TIMEOUT);
 
 
         setTimeout(() => {
@@ -294,7 +374,7 @@ io.on("connection", socket => {
           usersList[userRoom].questionCounter++;
           console.log(`Moving to next question in room ${userRoom}`);
           io.to(userRoom).emit("next-question");
-        }, 10000);
+        }, INNER_RANKING_TIMEOUT * 2);
       }
       
       cb({success: true});
